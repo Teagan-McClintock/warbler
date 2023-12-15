@@ -46,12 +46,18 @@ class MessageBaseViewTestCase(TestCase):
         u1 = User.signup("u1", "u1@email.com", "password", None)
         db.session.flush()
 
+        u2 = User.signup("u2", "u2@email.com", "password", None)
+        db.session.flush()
+
         m1 = Message(text="m1-text", user_id=u1.id)
-        db.session.add_all([m1])
+        m2 = Message(text="m2-text", user_id=u2.id)
+        db.session.add_all([m1,m2])
         db.session.commit()
 
         self.u1_id = u1.id
+        self.u2_id = u2.id
         self.m1_id = m1.id
+        self.m2_id = m2.id
 
 class MessageAddViewTestCase(MessageBaseViewTestCase):
     def test_add_message(self):
@@ -71,3 +77,60 @@ class MessageAddViewTestCase(MessageBaseViewTestCase):
 
     def test_delete_message(self):
         """Test that user can delete a message they wrote"""
+
+        with app.test_client() as c:
+            with c.session_transaction() as sess:
+                sess[CURR_USER_KEY] = self.u1_id
+
+            resp = c.post(f'/messages/{self.m1_id}/delete')
+
+            self.assertEqual(resp.status_code, 302)
+
+            self.assertIsNone(Message.query
+                              .filter_by(id=self.m1_id)
+                              .one_or_none())
+
+    def test_cant_delete_others_messages(self):
+        """Test that users can't delete messages they didn't write"""
+
+        with app.test_client() as c:
+            with c.session_transaction() as sess:
+                sess[CURR_USER_KEY] = self.u1_id
+
+            resp = c.post(f'/messages/{self.m2_id}/delete',
+                          follow_redirects=True)
+
+            self.assertEqual(resp.status_code, 200)
+
+            html = resp.get_data(as_text=True)
+
+            self.assertIn("Access unauthorized.", html)
+
+            self.assertIsNotNone(Message.query
+                              .filter_by(id=self.m2_id)
+                              .one_or_none())
+
+    def test_show_message(self):
+        """Test that a message displays"""
+
+        with app.test_client() as c:
+            with c.session_transaction() as sess:
+                sess[CURR_USER_KEY] = self.u1_id
+
+            resp = c.get(f'/messages/{self.m1_id}')
+            self.assertEqual(resp.status_code, 200)
+
+            message = Message.query.get(self.m1_id)
+
+            html = resp.get_data(as_text=True)
+            self.assertIn(f"{message.text}", html)
+
+    def test_show_invalid_message(self):
+        """Check that messages that don't exist don't display"""
+
+        with app.test_client() as c:
+            with c.session_transaction() as sess:
+                sess[CURR_USER_KEY] = self.u1_id
+
+            resp = c.get(f'/messages/0')
+            self.assertEqual(resp.status_code, 404)
